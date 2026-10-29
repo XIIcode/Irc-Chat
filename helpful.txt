@@ -1,14 +1,6 @@
 Start the server in the background:
 
 Bash
-pm2 start ecosystem.config.js
-View live server logs and chat activity:
-
-Bash
-pm2 logs lan-irc-server
-Check server status and resource usage:
-
-Bash
 pm2 status
 Restart the server:
 
@@ -23,3 +15,13 @@ Make PM2 auto-start the server on system reboot:
 Bash
 pm2 startup
 pm2 save
+
+
+# Delete the old failed process if it exists
+pm2 delete lan-irc-server
+
+# Start the server with the corrected configuration
+pm2 start ecosystem.config.js
+
+# Check live logs to ensure it started successfully
+pm2 logs lan-irc-server
