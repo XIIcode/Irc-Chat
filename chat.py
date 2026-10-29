@@ -1,20 +1,119 @@
 import os
 import random
 import socket
+import ssl
 import sys
 import threading
 import time
 
 # ==========================================
-# STANDARD SERVER LOGIC
+# AUTO-CERTIFICATE GENERATOR (Warning-Free)
+# ==========================================
+
+
+def ensure_certificates():
+  if not os.path.exists("cert.pem") or not os.path.exists("key.pem"):
+    print("[*] Generating SSL certificates for encryption...")
+    try:
+      from cryptography import x509
+      from cryptography.hazmat.primitives import hashes
+      from cryptography.hazmat.primitives.asymmetric import rsa
+      from cryptography.hazmat.primitives.serialization import (
+          Encoding,
+          NoEncryption,
+          PrivateFormat,
+      )
+      from cryptography.x509.name import NameAttribute
+      from cryptography.x509.oid import NameOID
+      import datetime
+
+      private_key = rsa.generate_private_key(
+          public_exponent=65537, key_size=2048
+      )
+      now = datetime.datetime.now(datetime.timezone.utc)
+      subject = issuer = x509.Name(
+          [x509.NameAttribute(NameOID.COMMON_NAME, "LANChat")]
+      )
+      cert = (
+          x509.CertificateBuilder()
+          .subject_name(subject)
+          .issuer_name(issuer)
+          .public_key(private_key.public_key())
+          .serial_number(x509.random_serial_number())
+          .not_valid_before(now)
+          .not_valid_after(now + datetime.timedelta(days=365))
+          .add_extension(
+              x509.BasicConstraints(ca=True, path_length=None), critical=True
+          )
+          .sign(private_key, hashes.SHA256())
+      )
+
+      with open("key.pem", "wb") as f:
+        f.write(
+            private_key.private_bytes(
+                Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption()
+            )
+        )
+
+      with open("cert.pem", "wb") as f:
+        f.write(cert.public_bytes(Encoding.PEM))
+
+      print("[*] Certificates generated successfully!")
+    except ImportError:
+      print(
+          "\033[91m[!] 'cryptography' module not found.\n"
+          "Please run: pip install cryptography\033[0m"
+      )
+      sys.exit(1)
+
+
+# ==========================================
+# COLOR PALETTE FOR TERMINAL
+# ==========================================
+COLORS = [
+    "\033[91m",  # Bright Red
+    "\033[92m",  # Bright Green
+    "\033[93m",  # Bright Yellow
+    "\033[94m",  # Bright Blue
+    "\033[95m",  # Bright Magenta
+    "\033[96m",  # Bright Cyan
+]
+RESET = "\033[0m"
+
+message_history = []
+user_colors = {}
+
+# ==========================================
+# SECURE STANDARD SERVER LOGIC
 # ==========================================
 
 
 def handle_client(client_socket, clients, usernames):
   try:
-    username = client_socket.recv(1024).decode("utf-8")
+    username = client_socket.recv(1024).decode("utf-8").strip()
     usernames[client_socket] = username
-    broadcast(f"*** {username} has joined the chat. ***", client_socket, clients, usernames)
+
+    available_colors = [c for c in COLORS if c not in user_colors.values()]
+    assigned_color = (
+        random.choice(available_colors)
+        if available_colors
+        else random.choice(COLORS)
+    )
+    user_colors[client_socket] = assigned_color
+
+    for past_msg in message_history:
+      try:
+        client_socket.send((past_msg + "\n").encode("utf-8"))
+        time.sleep(0.01)
+      except:
+        break
+
+    broadcast(
+        f"\033[90m*** {username} has joined the chat. ***{RESET}",
+        client_socket,
+        clients,
+        usernames,
+    )
 
     while True:
       message = client_socket.recv(1024)
@@ -24,13 +123,18 @@ def handle_client(client_socket, clients, usernames):
 
       if msg_str.lower() == "/list":
         user_list = ", ".join(usernames.values())
-        response = f"*** Connected users ({len(usernames)}): {user_list}"
+        response = (
+            f"\033[93m*** Connected users ({len(usernames)}): {user_list} ***"
+            f"{RESET}"
+        )
         try:
-          client_socket.send(response.encode("utf-8"))
+          client_socket.send((response + "\n").encode("utf-8"))
         except:
           break
       else:
-        broadcast(f"{username}: {msg_str}", client_socket, clients, usernames)
+        color = user_colors.get(client_socket, "\033[97m")
+        formatted_msg = f"{color}{username}: {msg_str}{RESET}"
+        broadcast(formatted_msg, client_socket, clients, usernames)
   except:
     pass
   finally:
@@ -39,10 +143,16 @@ def handle_client(client_socket, clients, usernames):
 
 def broadcast(message_str, sender_socket, clients, usernames):
   print(message_str)
+
+  if not "*** " in message_str:
+    message_history.append(message_str)
+    if len(message_history) > 100:
+      message_history.pop(0)
+
   for client in clients:
     if client != sender_socket:
       try:
-        client.send(message_str.encode("utf-8"))
+        client.send((message_str + "\n").encode("utf-8"))
       except:
         client.close()
         remove_client(client, clients, usernames)
@@ -54,26 +164,43 @@ def remove_client(client_socket, clients, usernames):
     clients.remove(client_socket)
     if client_socket in usernames:
       del usernames[client_socket]
+    if client_socket in user_colors:
+      del user_colors[client_socket]
     client_socket.close()
-    broadcast(f"*** {username} has left the chat. ***", None, clients, usernames)
+    broadcast(
+        f"\033[90m*** {username} has left the chat. ***{RESET}",
+        None,
+        clients,
+        usernames,
+    )
 
 
 def run_server():
+  ensure_certificates()
   host = "0.0.0.0"
   port = 6667
+
+  context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+  context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
 
   server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
   server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
   server.bind((host, port))
   server.listen()
+  server.settimeout(1.0)  # Allows loop to check for KeyboardInterrupt
 
   hostname = socket.gethostname()
   local_ip = socket.gethostbyname(hostname)
 
-  print(f"\n[*] Standard IRC Server started on port {port}!")
-  print(f"[*] Share this IP address with others: {local_ip}")
   print(
-      "[*] Waiting for connections... Press Ctrl+C to stop.\n"
+      f"\n\033[92m[*] SECURE Encrypted IRC Server started on port"
+      f" {port}!\033[0m"
+  )
+  print(
+      f"\033[96m[*] Share this IP address with others: {local_ip}\033[0m"
+  )
+  print(
+      "[*] Waiting for encrypted connections... Press Ctrl+C to stop.\n"
       "--------------------------------------------------"
   )
 
@@ -82,7 +209,12 @@ def run_server():
 
   try:
     while True:
-      client_socket, address = server.accept()
+      try:
+        raw_socket, address = server.accept()
+      except socket.timeout:
+        continue  # Timeout allows Ctrl+C check
+
+      client_socket = context.wrap_socket(raw_socket, server_side=True)
       clients.append(client_socket)
       thread = threading.Thread(
           target=handle_client, args=(client_socket, clients, usernames)
@@ -90,57 +222,73 @@ def run_server():
       thread.daemon = True
       thread.start()
   except KeyboardInterrupt:
-    print("\n[*] Shutting down server...")
+    print("\n\033[91m[*] Shutting down server...\033[0m")
     server.close()
 
 
 # ==========================================
-# ANONYMOUS & DISAPPEARING SERVER LOGIC
+# SECURE ANONYMOUS SERVER LOGIC
 # ==========================================
 
 
 def run_anon_server():
+  ensure_certificates()
   host = "0.0.0.0"
-  port = 6668  # Different port for anonymous mode
+  port = 6668
+
+  context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+  context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
 
   server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
   server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
   server.bind((host, port))
   server.listen()
+  server.settimeout(1.0)  # Allows loop to check for KeyboardInterrupt
 
   hostname = socket.gethostname()
   local_ip = socket.gethostbyname(hostname)
 
-  print(f"\n[*] Anonymous Disappearing Server started on port {port}!")
-  print(f"[*] Share this IP address with others: {local_ip}")
   print(
-      "[*] Waiting for anonymous connections... Press Ctrl+C to stop.\n"
-      "--------------------------------------------------"
+      f"\n\033[95m[*] SECURE Anonymous Disappearing Server started on port"
+      f" {port}!\033[0m"
+  )
+  print(
+      f"\033[96m[*] Share this IP address with others: {local_ip}\033[0m"
+  )
+  print(
+      "[*] Waiting for secure anonymous connections... Press Ctrl+C to"
+      " stop.\n--------------------------------------------------"
   )
 
   clients = []
 
   def handle_anon_client(client_socket):
     anon_name = f"Anon_{random.randint(1000, 9999)}"
+    anon_color = random.choice(COLORS)
     try:
-      # Notify others
       anon_broadcast(
-          f"*** {anon_name} entered the shadows. ***", client_socket, clients
+          f"\033[90m*** {anon_name} entered the shadows. ***{RESET}",
+          client_socket,
+          clients,
       )
       while True:
         message = client_socket.recv(1024)
         if not message:
           break
         msg_str = message.decode("utf-8").strip()
-        anon_broadcast(f"{anon_name}: {msg_str}", client_socket, clients)
+        anon_broadcast(
+            f"{anon_color}{anon_name}: {msg_str}{RESET}", client_socket, clients
+        )
     except:
-        pass
+      pass
     finally:
       if client_socket in clients:
         clients.remove(client_socket)
       client_socket.close()
       anon_broadcast(
-          f"*** {anon_name} vanished from the shadows. ***", None, clients
+          f"\033[90m*** {anon_name} vanished from the shadows. ***{RESET}",
+          None,
+          clients,
       )
 
   def anon_broadcast(message_str, sender_socket, clients_list):
@@ -148,8 +296,7 @@ def run_anon_server():
     for client in clients_list:
       if client != sender_socket:
         try:
-          # Prefix with 'EPHEMERAL|' so clients know to auto-delete it
-          client.send(f"EPHEMERAL|{message_str}".encode("utf-8"))
+          client.send(f"EPHEMERAL|{message_str}\n".encode("utf-8"))
         except:
           client.close()
           if client in clients_list:
@@ -157,7 +304,12 @@ def run_anon_server():
 
   try:
     while True:
-      client_socket, address = server.accept()
+      try:
+        raw_socket, address = server.accept()
+      except socket.timeout:
+        continue
+
+      client_socket = context.wrap_socket(raw_socket, server_side=True)
       clients.append(client_socket)
       thread = threading.Thread(
           target=handle_anon_client, args=(client_socket,)
@@ -165,12 +317,12 @@ def run_anon_server():
       thread.daemon = True
       thread.start()
   except KeyboardInterrupt:
-    print("\n[*] Shutting down anonymous server...")
+    print("\n\033[91m[*] Shutting down anonymous server...\033[0m")
     server.close()
 
 
 # ==========================================
-# CLIENT UI (Buffer-Safe & Ephemeral Support)
+# CLIENT UI
 # ==========================================
 
 if sys.platform == "win32":
@@ -203,46 +355,50 @@ class ChatClientUI:
     self.lock = threading.Lock()
 
   def redraw_line(self):
-    prompt = "> "
+    prompt = "\033[92m> \033[0m"
     typed_text = "".join(self.current_input)
     sys.stdout.write(f"\r\033[K{prompt}{typed_text}")
     sys.stdout.flush()
 
   def receive_messages(self):
+    buffer = ""
     while self.running:
       try:
-        raw_message = self.client_socket.recv(1024).decode("utf-8")
-        if not raw_message:
+        data = self.client_socket.recv(1024).decode("utf-8")
+        if not data:
           break
 
-        is_ephemeral_msg = raw_message.startswith("EPHEMERAL|")
-        message = (
-            raw_message.replace("EPHEMERAL|", "", 1)
-            if is_ephemeral_msg
-            else raw_message
-        )
+        buffer += data
+        while "\n" in buffer:
+          line, buffer = buffer.split("\n", 1)
+          line = line.strip("\r")
+          if not line:
+            continue
 
-        with self.lock:
-          sys.stdout.write("\r\033[K")
-          print(message)
-          self.redraw_line()
+          is_ephemeral_msg = line.startswith("EPHEMERAL|")
+          message = (
+              line.replace("EPHEMERAL|", "", 1) if is_ephemeral_msg else line
+          )
 
-        # If it's an anonymous/disappearing message, schedule its deletion after 6 seconds
-        if is_ephemeral_msg and self.is_ephemeral:
-          threading.Thread(
-              target=self.expire_message_line, args=(message,), daemon=True
-          ).start()
+          with self.lock:
+            sys.stdout.write("\r\033[K")
+            print(message)
+            self.redraw_line()
+
+          if is_ephemeral_msg and self.is_ephemeral:
+            threading.Thread(
+                target=self.expire_message_line, args=(message,), daemon=True
+            ).start()
 
       except:
         break
     self.running = False
 
   def expire_message_line(self, message_text):
-    time.sleep(6)  # Disappear after 6 seconds
+    time.sleep(6)
     with self.lock:
-      # Clear current prompt, move up, clear the message line, and restore prompt
-      sys.stdout.write("\r\033[K")  # Clear prompt line
-      sys.stdout.write("\033[1A\033[K")  # Move up 1 line and clear message line
+      sys.stdout.write("\r\033[K")
+      sys.stdout.write("\033[1A\033[K")
       self.redraw_line()
 
   def start(self):
@@ -253,14 +409,14 @@ class ChatClientUI:
       tty.setcbreak(fd)
 
     mode_desc = (
-        "ANONYMOUS SHADOW ROOM (Messages disappear after 6s)"
+        "\033[95mSECURE ANONYMOUS ROOM (Messages disappear after 6s)\033[0m"
         if self.is_ephemeral
-        else f"Connected as **{self.username}**"
+        else f"Connected securely as \033[93m{self.username}\033[0m"
     )
     print(
         f"\n[*] {mode_desc}!"
-        "\nType your messages and press Enter. Type `/quit` to exit.\n"
-        "--------------------------------------------------"
+        "\nType your messages and press Enter. Type \033[91m`/quit`\033[0m to"
+        " exit.\n--------------------------------------------------"
     )
     self.redraw_line()
 
@@ -285,22 +441,19 @@ class ChatClientUI:
                 break
               elif msg.lower() == "/help" and not self.is_ephemeral:
                 print(
-                    "*** Available Commands:\n"
+                    "\033[93m*** Available Commands:\n"
                     "  /list  - Show connected users\n"
                     "  /help  - Show help\n"
-                    "  /quit  - Exit chat"
+                    "  /quit  - Exit chat\033[0m"
                 )
               else:
                 try:
                   self.client_socket.send(msg.encode("utf-8"))
-                  # If ephemeral, also delete our own sent message from view after 6s to keep it clean
                   if self.is_ephemeral:
-                    sent_display = f"{self.username}: {msg}"
-                    # Move up past the newline we just printed, clear it, and redraw prompt
                     sys.stdout.write("\033[1A\033[K")
                     self.redraw_line()
                 except:
-                  print("[!] Failed to send message.")
+                  print("\033[91m[!] Failed to send message.\033[0m")
                   break
             if self.running:
               self.redraw_line()
@@ -318,7 +471,7 @@ class ChatClientUI:
       if sys.platform != "win32" and old_settings:
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_settings)
       self.client_socket.close()
-      print("\n[*] Exited chat.")
+      print("\n\033[91m[*] Exited chat.\033[0m")
 
 
 def run_client():
@@ -326,11 +479,17 @@ def run_client():
   port = 6667
   username = input("Choose your chat nickname: ").strip()
 
-  client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+  context.check_hostname = False
+  context.verify_mode = ssl.CERT_NONE
+
+  normal_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  client = context.wrap_socket(normal_socket)
+
   try:
     client.connect((target_ip, port))
   except Exception as e:
-    print(f"[!] Could not connect to server: {e}")
+    print(f"\033[91m[!] Could not connect to secure server: {e}\033[0m")
     return
 
   client.send(username.encode("utf-8"))
@@ -344,11 +503,17 @@ def run_anon_client():
   ).strip()
   port = 6668
 
-  client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+  context.check_hostname = False
+  context.verify_mode = ssl.CERT_NONE
+
+  normal_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  client = context.wrap_socket(normal_socket)
+
   try:
     client.connect((target_ip, port))
   except Exception as e:
-    print(f"[!] Could not connect to anonymous server: {e}")
+    print(f"\033[91m[!] Could not connect to secure anonymous server: {e}\033[0m")
     return
 
   ui = ChatClientUI(client, "You", is_ephemeral=True)
@@ -360,11 +525,11 @@ def run_anon_client():
 # ==========================================
 
 if __name__ == "__main__":
-  print("=== Python LAN IRC Chat ===")
-  print("1. Start Standard Server (Host)")
-  print("2. Join Standard Chat (Client)")
-  print("3. Start Anonymous Disappearing Server (Host)")
-  print("4. Join Anonymous Disappearing Chat (Client)")
+  print("\033[96m=== Secure Python LAN IRC Chat ==-\033[0m")
+  print("1. Start Secure Standard Server (Host)")
+  print("2. Join Secure Standard Chat (Client)")
+  print("3. Start Secure Anonymous Disappearing Server (Host)")
+  print("4. Join Secure Anonymous Disappearing Chat (Client)")
   choice = input("Select mode (1, 2, 3, or 4): ").strip()
 
   if choice == "1":
@@ -376,4 +541,7 @@ if __name__ == "__main__":
   elif choice == "4":
     run_anon_client()
   else:
-    print("Invalid choice. Please run the script again and select 1, 2, 3, or 4.")
+    print(
+        "\033[91mInvalid choice. Please run the script again and select 1, 2,"
+        " 3, or 4.\033[0m"
+    )
