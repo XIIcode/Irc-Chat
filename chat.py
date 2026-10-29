@@ -521,27 +521,35 @@ def run_anon_client():
 
 
 # ==========================================
-# MAIN ENTRY POINT
+# MAIN ENTRY POINT (PM2 / CLI SUPPORT)
 # ==========================================
 
 if __name__ == "__main__":
-  print("\033[96m=== Secure Python LAN IRC Chat ==-\033[0m")
-  print("1. Start Secure Standard Server (Host)")
-  print("2. Join Secure Standard Chat (Client)")
-  print("3. Start Secure Anonymous Disappearing Server (Host)")
-  print("4. Join Secure Anonymous Disappearing Chat (Client)")
-  choice = input("Select mode (1, 2, 3, or 4): ").strip()
+  import sys
 
-  if choice == "1":
-    run_server()
-  elif choice == "2":
-    run_client()
-  elif choice == "3":
-    run_anon_server()
-  elif choice == "4":
-    run_anon_client()
+  if len(sys.argv) > 1:
+    mode = sys.argv[1].lower()
+    if mode == "server":
+      run_server()
+    elif mode == "anon":
+      run_anon_server()
+    else:
+      print("Unknown mode. Use 'server' or 'anon'.")
   else:
-    print(
-        "\033[91mInvalid choice. Please run the script again and select 1, 2,"
-        " 3, or 4.\033[0m"
-    )
+    print("\033[96m=== Secure Python LAN IRC Chat ==-\033[0m")
+    print("1. Start Secure Standard Server (Host)")
+    print("2. Join Secure Standard Chat (Client)")
+    print("3. Start Secure Anonymous Disappearing Server (Host)")
+    print("4. Join Secure Anonymous Disappearing Chat (Client)")
+    choice = input("Select mode (1, 2, 3, or 4): ").strip()
+
+    if choice == "1":
+      run_server()
+    elif choice == "2":
+      run_client()
+    elif choice == "3":
+      run_anon_server()
+    elif choice == "4":
+      run_anon_client()
+    else:
+      print("\033[91mInvalid choice.\033[0m")
