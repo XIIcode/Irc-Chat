@@ -187,7 +187,7 @@ def run_server():
   server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
   server.bind((host, port))
   server.listen()
-  server.settimeout(1.0)  # Allows loop to check for KeyboardInterrupt
+  server.settimeout(1.0)
 
   hostname = socket.gethostname()
   local_ip = socket.gethostbyname(hostname)
@@ -212,7 +212,7 @@ def run_server():
       try:
         raw_socket, address = server.accept()
       except socket.timeout:
-        continue  # Timeout allows Ctrl+C check
+        continue
 
       client_socket = context.wrap_socket(raw_socket, server_side=True)
       clients.append(client_socket)
@@ -243,7 +243,7 @@ def run_anon_server():
   server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
   server.bind((host, port))
   server.listen()
-  server.settimeout(1.0)  # Allows loop to check for KeyboardInterrupt
+  server.settimeout(1.0)
 
   hostname = socket.gethostname()
   local_ip = socket.gethostbyname(hostname)
@@ -439,10 +439,20 @@ class ChatClientUI:
               if msg.lower() == "/quit":
                 self.running = False
                 break
+              elif msg.lower() == "/clear":
+                # Clear terminal screen and redraw header & prompt
+                sys.stdout.write("\033[2J\033[H")
+                print(
+                    f"\n[*] Connected securely as \033[93m{self.username}\033[0m"
+                    "\nType your messages and press Enter. Type"
+                    " \033[91m`/quit`\033[0m to"
+                    " exit.\n--------------------------------------------------"
+                )
               elif msg.lower() == "/help" and not self.is_ephemeral:
                 print(
                     "\033[93m*** Available Commands:\n"
                     "  /list  - Show connected users\n"
+                    "  /clear - Clear terminal screen\n"
                     "  /help  - Show help\n"
                     "  /quit  - Exit chat\033[0m"
                 )
@@ -525,8 +535,6 @@ def run_anon_client():
 # ==========================================
 
 if __name__ == "__main__":
-  import sys
-
   if len(sys.argv) > 1:
     mode = sys.argv[1].lower()
     if mode == "server":
@@ -552,4 +560,7 @@ if __name__ == "__main__":
     elif choice == "4":
       run_anon_client()
     else:
-      print("\033[91mInvalid choice.\033[0m")
+      print(
+          "\033[91mInvalid choice. Please run the script again and select 1, 2,"
+          " 3, or 4.\033[0m"
+      )

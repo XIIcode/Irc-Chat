@@ -3,7 +3,7 @@ module.exports = {
     {
       name: "lan-irc-server",
       script: "chat.py",
-      args: "server",
+      args: "server", // change to anon to start in anon mode.
       interpreter: "python3",
       autorestart: true,
       watch: false,

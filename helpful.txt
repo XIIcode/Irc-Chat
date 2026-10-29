@@ -6,6 +6,8 @@ Restart the server:
 
 Bash
 pm2 restart lan-irc-server
+
+
 Stop the server:
 
 Bash
@@ -17,8 +19,7 @@ pm2 startup
 pm2 save
 
 
-# Delete the old failed process if it exists
-pm2 delete lan-irc-server
+
 
 # Start the server with the corrected configuration
 pm2 start ecosystem.config.js
